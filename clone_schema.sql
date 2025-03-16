@@ -367,10 +367,11 @@ END;
 $$;
 
 -- SELECT * FROM public.pg_get_tabledef('sample', 'address', false);
-DROP FUNCTION IF EXISTS public.pg_get_tabledef(character varying,character varying,boolean,tabledefs[]);
+DROP FUNCTION IF EXISTS public.pg_get_tabledef(character varying,character varying,character varying,boolean,tabledefs[]);
 CREATE OR REPLACE FUNCTION public.pg_get_tabledef(
   in_schema varchar,
   in_table varchar,
+  out_schema varchar,
   _verbose boolean,
   VARIADIC arr public.tabledefs[] DEFAULT '{}':: public.tabledefs[]
 )
@@ -463,16 +464,16 @@ $$
     -- v17 fix: handle case-sensitive  
     -- v_qualified = in_schema || '.' || in_table;
 	
-    arglen := array_length($4, 1);
+    arglen := array_length($5, 1);
     IF arglen IS NULL THEN
         -- nothing to do, so assume defaults
         NULL;
     ELSE
         -- loop thru args
-        -- IF 'NO_TRIGGERS' = ANY ($4)
-        -- select array_to_string($4, ',', '***') INTO vargs;
-        IF bVerbose THEN RAISE NOTICE 'arguments=%', $4; END IF;
-        FOREACH avarg IN ARRAY $4 LOOP
+        -- IF 'NO_TRIGGERS' = ANY ($5)
+        -- select array_to_string($5, ',', '***') INTO vargs;
+        IF bVerbose THEN RAISE NOTICE 'arguments=%', $5; END IF;
+        FOREACH avarg IN ARRAY $5 LOOP
             IF bVerbose THEN RAISE NOTICE 'arg=%', avarg; END IF;
             IF avarg = 'FKEYS_INTERNAL' OR avarg = 'FKEYS_EXTERNAL' OR avarg = 'FKEYS_NONE' THEN
                 fkcnt = fkcnt + 1;
@@ -806,6 +807,7 @@ $$
 		         -- Issue#37 handle case-sensitive user-defined types
 		         -- v_temp = quote_ident(v_colrec.udt_schema) || '.' || v_colrec.udt_name;
 		         v_temp = quote_ident(v_colrec.udt_schema) || '.' || quote_ident(v_colrec.udt_name);
+             v_colrec.column_default := replace(v_colrec.column_default, '::', '::' || out_schema || '.');
 
 		     ELSEIF v_colrec.data_type = 'ARRAY' THEN
    		       -- Issue#6 fix: handle arrays
@@ -1375,11 +1377,12 @@ DECLARE
   -- issue#94
   bData            boolean := False;
   bDDLOnly         boolean := False;
-  bVerbose         boolean := False;
-  bDebugExec       boolean := False;
-  bDebug           boolean := False;
-  bNoACL           boolean := False;
-  bNoOwner         boolean := False;
+  bVerbose         boolean := True;
+  bDebugExec       boolean := True;
+  bDebug           boolean := True;
+  bNoACL           boolean := True;
+  bNoOwner         boolean := True;
+  bForceUnlogged   boolean := True;
   arglen           integer;
   vargs            text;
   avarg            public.cloneparms;
@@ -2071,7 +2074,7 @@ BEGIN
           -- FIX: #121 Use pg_get_tabledef instead
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');          
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');          
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');          
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
           IF bDDLOnly THEN
@@ -2120,7 +2123,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 				    buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
@@ -2159,7 +2162,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);     
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 					IF bDDLOnly THEN
@@ -2227,7 +2230,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 						IF bDDLOnly THEN
@@ -2274,7 +2277,7 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       -- Issue#140 remove quote_ident!
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
       -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			IF bDDLOnly THEN
@@ -2606,7 +2609,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			    IF bDDLOnly THEN
@@ -2661,7 +2664,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			      buffer3 := REPLACE(buffer3, 'CREATE UNIQUE INDEX IF NOT EXISTS', 'INFO:  CREATE UNIQUE INDEX IF NOT EXISTS');
@@ -2691,7 +2694,7 @@ BEGIN
           -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
           -- Issue#140 remove quote_ident!
           -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+          SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
           buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			    IF bDDLOnly THEN
@@ -2758,7 +2761,7 @@ BEGIN
             -- SELECT * INTO buffer3 FROM public.get_table_ddl(quote_ident(source_schema), tblname, False);
             -- Issue#140 remove quote_ident!
             -- SELECT * INTO buffer3 FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+            SELECT * INTO buffer3 FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
             buffer3 := REPLACE(buffer3, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
             -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			      IF bDDLOnly THEN
@@ -2805,7 +2808,7 @@ BEGIN
       -- SELECT * INTO qry FROM public.get_table_ddl_complex(source_schema, dest_schema, tblname, sq_server_version_num);
       -- Issue#140 remove quote_ident!
       -- SELECT * INTO qry FROM public.pg_get_tabledef(quote_ident(source_schema), tblname, bDebug, 'FKEYS_NONE');                      
-      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, false, 'FKEYS_NONE');                      
+      SELECT * INTO qry FROM public.pg_get_tabledef(source_schema, tblname, dest_schema, false, 'FKEYS_NONE');                      
       qry := REPLACE(qry, quote_ident(source_schema) || '.', quote_ident(dest_schema) || '.');
           -- Issue#150 : Add INFO lines if we are in DDLONLY mode
 			    IF bDDLOnly THEN
@@ -4712,6 +4715,3 @@ END;
 
 $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
-
--- ALTER FUNCTION public.clone_schema(text, text, cloneparms[]) OWNER TO postgres;
--- REVOKE ALL PRIVILEGES ON FUNCTION clone_schema(text, text, cloneparms[]) FROM public;
